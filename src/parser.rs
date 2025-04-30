@@ -26,6 +26,7 @@ pub enum Response {
         mode: u8,
         channel_mask: u32,
         duration: u8,
+        reserved: u8,
     },
     SkSreg {
         sreg: u8,
@@ -43,6 +44,7 @@ pub enum Response {
         ipaddr: IpAddr,
         port: u16,
         sec: u8,
+        reserved: u8,
         datalen: u16,
         result: u8, // param of Event 0x21
     },
@@ -123,6 +125,7 @@ impl fmt::Debug for Response {
                 mode,
                 channel_mask,
                 duration,
+                reserved,
             } => {
                 f.debug_struct("SkScan")
                  .field("mode", &format_args!("{:#x}", mode))
@@ -160,6 +163,7 @@ impl fmt::Debug for Response {
                 ipaddr,
                 port,
                 sec,
+                reserved,
                 datalen,
                 result,
             } => {
@@ -288,12 +292,14 @@ fn parse_sksetpwd(input: &[u8]) -> IResult<&[u8], Response> {
 }
 
 fn parse_skscan(input: &[u8]) -> IResult<&[u8], Response> {
-    let (input, (_, _, mode, _, channel_mask, _, duration, _)) = tuple((
+    let (input, (_, _, mode, _, channel_mask, _, duration, _, reserved, _,)) = tuple((
         tag("SKSCAN"),
         space1,
         map_res(hex_digit1, from_hex_u8),
         space1,
         map_res(hex_digit1, from_hex_u32),
+        space1,
+        map_res(hex_digit1, from_hex_u8),
         space1,
         map_res(hex_digit1, from_hex_u8),
         crlf,
@@ -304,6 +310,7 @@ fn parse_skscan(input: &[u8]) -> IResult<&[u8], Response> {
         mode,
         channel_mask,
         duration,
+        reserved,
     }))
 }
 
@@ -336,12 +343,14 @@ fn parse_ipv6_addr(input: &[u8]) -> IResult<&[u8], IpAddr> {
 }
 
 fn parse_event(input: &[u8]) -> IResult<&[u8], Response> {
-    let (input, (_, _, num, _, sender, _, param, _)) = tuple((
+    let (input, (_, _, num, _, sender, _, param, _, _, _)) = tuple((
         tag("EVENT"),
         space1,
         map_res(hex_digit1, from_hex_u8),
         space1,
         parse_ipv6_addr,
+        opt(space1),
+        opt(map_res(hex_digit1, from_hex_u8)),
         opt(space1),
         opt(map_res(hex_digit1, from_hex_u8)),
         crlf,
@@ -354,13 +363,14 @@ fn parse_event(input: &[u8]) -> IResult<&[u8], Response> {
     }))
 }
 fn parse_epandesc(input: &[u8]) -> IResult<&[u8], Response> {
-    let (input, (_, channel, channel_page, pan_id, addr, lqi, pair_id)) = tuple((
+    let (input, (_, channel, channel_page, pan_id, addr, lqi, _, pair_id)) = tuple((
         tuple((tag("EPANDESC"), crlf)),
         delimited(tag("  Channel:"), map_res(hex_digit1, from_hex_u8), crlf),
         delimited(tag("  Channel Page:"), map_res(hex_digit1, from_hex_u8), crlf),
         delimited(tag("  Pan ID:"), map_res(hex_digit1, from_hex_u16), crlf),
         delimited(tag("  Addr:"), take_while1(is_alphanumeric), crlf),
         delimited(tag("  LQI:"), map_res(hex_digit1, from_hex_u8), crlf),
+        delimited(tag("  Side:"), map_res(hex_digit1, from_hex_u8), crlf),
         delimited(tag("  PairID:"), take_while1(is_alphanumeric), crlf),
     ))(input)?;
 
@@ -436,7 +446,7 @@ fn parse_skjoin(input: &[u8]) -> IResult<&[u8], Response> {
 }
 
 fn parse_erxudp(input: &[u8]) -> IResult<&[u8], Response> {
-    let (input, (_, _, sender, _, dest, _, rport, _, lport, _, senderlla, _, secured, _, datalen, _)) = tuple((
+    let (input, (_, _, sender, _, dest, _, rport, _, lport, _, senderlla, _, secured, _, _, _, datalen, _)) = tuple((
         tag("ERXUDP"),
         space1,
         parse_ipv6_addr,
@@ -448,6 +458,8 @@ fn parse_erxudp(input: &[u8]) -> IResult<&[u8], Response> {
         map_res(hex_digit1, from_hex_u16),
         space1,
         take_while1(is_alphanumeric),
+        space1,
+        map_res(hex_digit1, from_hex_u8),
         space1,
         map_res(hex_digit1, from_hex_u8),
         space1,
@@ -467,8 +479,7 @@ fn parse_erxudp(input: &[u8]) -> IResult<&[u8], Response> {
 
         edata
     } else {
-        let bytes = Bytes::copy_from_slice(data);
-        EData::InvalidEData(bytes)
+        EData::InvalidEData(data)
     };
     let (input, _) = crlf(input)?;
 
@@ -489,9 +500,9 @@ fn parse_erxudp(input: &[u8]) -> IResult<&[u8], Response> {
 
 fn parse_ehd(input: &[u8]) -> IResult<&[u8], EHd> {
     let (input, (ehd1, ehd2, tid)) = tuple((
-        be_u8,
-        be_u8,
-        be_u16,
+        map_res(hex_digit1, from_hex_u8),
+        map_res(hex_digit1, from_hex_u8),
+        map_res(hex_digit1, from_hex_u16),
     ))(input)?;
 
     let ehd = EHd {
@@ -503,11 +514,11 @@ fn parse_ehd(input: &[u8]) -> IResult<&[u8], EHd> {
 }
 
 fn parse_edata_property(input: &[u8]) -> IResult<&[u8], EDataProperty> {
-    let (input, epc) = be_u8(input)?;
-    let (input, pdc) = be_u8(input)?;
+    let (input, (epc, pdc)) = tuple((
+        map_res(hex_digit1, from_hex_u8),
+        map_res(hex_digit1, from_hex_u8),
+    ))(input)?;
     let (input, edt) = take(pdc)(input)?;
-
-    let edt = Bytes::copy_from_slice(edt);
 
     let p = EDataProperty {
         epc,
@@ -520,9 +531,9 @@ fn parse_edata_property(input: &[u8]) -> IResult<&[u8], EDataProperty> {
 
 fn parse_eoj(input: &[u8]) -> IResult<&[u8], Eoj> {
     let (input, (class_group_code, class_code, instance_code)) = tuple((
-        be_u8,
-        be_u8,
-        be_u8,
+        map_res(hex_digit1, from_hex_u8),
+        map_res(hex_digit1, from_hex_u8),
+        map_res(hex_digit1, from_hex_u8),
     ))(input)?;
 
     Ok((input, Eoj {
@@ -536,8 +547,8 @@ fn parse_edata(input: &[u8]) -> IResult<&[u8], EData> {
     let (input, (seoj, deoj, esv, opc)) = tuple((
         parse_eoj,
         parse_eoj,
-        be_u8,
-        be_u8,
+        map_res(hex_digit1, from_hex_u8),
+        map_res(hex_digit1, from_hex_u8),
     ))(input)?;
 
     let (input, props) = count(parse_edata_property, opc as usize)(input)?;
@@ -552,7 +563,7 @@ fn parse_edata(input: &[u8]) -> IResult<&[u8], EData> {
 }
 
 fn parse_sksendto(input: &[u8]) -> IResult<&[u8], Response> {
-    let (input, (_, _, handle, _, ipaddr, _, port, _, sec, _, datalen, _, _)) = tuple((
+    let (input, (_, _, handle, _, ipaddr, _, port, _, sec, _, reserved, _, datalen, _, _)) = tuple((
         tag("SKSENDTO"),
         space1,
         map_res(hex_digit1, from_hex_u8),
@@ -560,6 +571,8 @@ fn parse_sksendto(input: &[u8]) -> IResult<&[u8], Response> {
         parse_ipv6_addr,
         space1,
         map_res(hex_digit1, from_hex_u16),
+        space1,
+        map_res(hex_digit1, from_hex_u8),
         space1,
         map_res(hex_digit1, from_hex_u8),
         space1,
@@ -579,6 +592,7 @@ fn parse_sksendto(input: &[u8]) -> IResult<&[u8], Response> {
             ipaddr,
             port,
             sec,
+            reserved,
             datalen,
             result,
         }))

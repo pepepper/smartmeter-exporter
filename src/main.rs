@@ -28,25 +28,24 @@ use crate::parser::Response;
 
 #[derive(Debug)]
 struct UartReader {
-    inner: Arc<Mutex<TTYPort>>,
+    inner: TTYPort,
     is_closed: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
 struct UartWriter {
-    inner: Arc<Mutex<TTYPort>>,
+    inner: TTYPort,
     is_closed: Arc<AtomicBool>,
 }
 
 fn split_uart(uart: TTYPort) -> (UartReader, UartWriter) {
-    let inner = Arc::new(Mutex::new(uart));
     let is_closed = Arc::new(AtomicBool::new(false));
     (
         UartReader {
-            inner: inner.clone(),
+            inner: uart.try_clone_native().unwrap(),
             is_closed: is_closed.clone(),
         },
-        UartWriter { inner, is_closed },
+        UartWriter { inner: uart, is_closed },
     )
 }
 
@@ -59,10 +58,7 @@ impl Read for UartReader {
             ));
         }
         self.inner
-            .lock()
-            .expect("failed to acuire lock")
             .read(buf)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
 }
 
@@ -91,13 +87,8 @@ impl Write for UartWriter {
             ));
         }
 
-        let res = self.inner
-            .lock()
-            .expect("failed to acuire lock")
+        self.inner
             .write(buf)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
-        sleep(Duration::from_millis(10));
-        res
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -108,8 +99,6 @@ impl Write for UartWriter {
             ));
         }
         self.inner
-            .lock()
-            .expect("failed to acuire lock")
             .flush()
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
@@ -252,12 +241,11 @@ fn send_initialize_command_sequence(
 fn initialize() -> Result<(UartWriter, Receiver<Response>, IpAddr, JoinHandle<()>), Box<dyn Error>>
 {
     let mut uart =
-        TTYPort::open(&serialport::new("/dev/ttyS1", 115200)).expect("Failed to open serial port");
-    uart.set_exclusive(false)?;
+        TTYPort::open(&serialport::new("/dev/ttyO1", 115200)).expect("Failed to open serial port");
     uart.set_parity(serialport::Parity::None)?;
     uart.set_data_bits(DataBits::Eight)?;
     uart.set_stop_bits(StopBits::One)?;
-    uart.set_timeout(Duration::from_millis(2000))?;
+    uart.set_timeout(Duration::from_millis(5000))?;
 
     let (sender, mut receiver) = channel();
     let (mut reader, mut writer) = split_uart(uart);
@@ -271,6 +259,9 @@ fn initialize() -> Result<(UartWriter, Receiver<Response>, IpAddr, JoinHandle<()
                 Ok(n) if n > 0 => {
                     debug!("read: {:?}", &b[..n]);
                     buf.put(&b[..n]);
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::TimedOut =>{
+                    debug!("timed out");
                 }
                 Err(e) => {
                     error!("uart read error: {:?}", e);

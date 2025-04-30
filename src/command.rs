@@ -57,7 +57,7 @@ impl Into<Bytes> for Command<'_> {
                 let mut cmd = BytesMut::new();
                 cmd.put(&b"SKSCAN 2 FFFFFFFF "[..]);
                 cmd.put(format!("{:X}", duration).as_bytes());
-                cmd.put(&b"\r\n"[..]);
+                cmd.put(&b" 0\r\n"[..]);
                 cmd.into()
             },
             Command::SkSreg { sreg, val } => {
@@ -105,7 +105,7 @@ impl Into<Bytes> for Command<'_> {
                 };
                 let get_now_p: Bytes = get_now_p.into();
 
-                let mut cmd = BytesMut::from(format!("SKSENDTO 1 {} 0E1A 1 {:>04X} ", ipaddr, get_now_p.len()).as_bytes());
+                let mut cmd = BytesMut::from(format!("SKSENDTO 1 {} 0E1A 1 0 {:>04X} ", ipaddr, get_now_p.len()).as_bytes());
                 cmd.put(get_now_p);
                 cmd.put(&b"\r\n"[..]);
                 cmd.into()
