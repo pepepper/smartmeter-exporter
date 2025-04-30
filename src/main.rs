@@ -253,11 +253,11 @@ fn initialize() -> Result<(UartWriter, Receiver<Response>, IpAddr, JoinHandle<()
 {
     let mut uart =
         TTYPort::open(&serialport::new("/dev/ttyS1", 115200)).expect("Failed to open serial port");
-    uart.set_exclusive(false);
-    uart.set_parity(serialport::Parity::None);
-    uart.set_data_bits(DataBits::Eight);
-    uart.set_stop_bits(StopBits::One);
-    uart.set_timeout(Duration::from_millis(2000));
+    uart.set_exclusive(false)?;
+    uart.set_parity(serialport::Parity::None)?;
+    uart.set_data_bits(DataBits::Eight)?;
+    uart.set_stop_bits(StopBits::One)?;
+    uart.set_timeout(Duration::from_millis(2000))?;
 
     let (sender, mut receiver) = channel();
     let (mut reader, mut writer) = split_uart(uart);
