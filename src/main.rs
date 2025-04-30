@@ -1,13 +1,13 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use log::{debug, error, info, warn};
-use serialport::{DataBits, SerialPort, StopBits};
+use serialport::{DataBits, SerialPort, StopBits, TTYPort};
 use std::error::Error;
 use std::fs::OpenOptions;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
+use std::thread::{sleep, JoinHandle};
 use std::time::Duration;
 use std::{io::Read, io::Write, net::SocketAddr};
 
@@ -28,17 +28,17 @@ use crate::parser::Response;
 
 #[derive(Debug)]
 struct UartReader {
-    inner: Arc<Mutex<Box<dyn SerialPort>>>,
+    inner: Arc<Mutex<TTYPort>>,
     is_closed: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
 struct UartWriter {
-    inner: Arc<Mutex<Box<dyn SerialPort>>>,
+    inner: Arc<Mutex<TTYPort>>,
     is_closed: Arc<AtomicBool>,
 }
 
-fn split_uart(uart: Box<dyn SerialPort>) -> (UartReader, UartWriter) {
+fn split_uart(uart: TTYPort) -> (UartReader, UartWriter) {
     let inner = Arc::new(Mutex::new(uart));
     let is_closed = Arc::new(AtomicBool::new(false));
     (
@@ -91,11 +91,13 @@ impl Write for UartWriter {
             ));
         }
 
-        self.inner
+        let res = self.inner
             .lock()
             .expect("failed to acuire lock")
             .write(buf)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
+        sleep(Duration::from_millis(10));
+        res
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -249,14 +251,13 @@ fn send_initialize_command_sequence(
 // So, if you drop the writer, you can successfully join the reader thread within the timeout.
 fn initialize() -> Result<(UartWriter, Receiver<Response>, IpAddr, JoinHandle<()>), Box<dyn Error>>
 {
-    
-    let mut uart = serialport::new("/dev/ttyS1", 115200)
-    .parity(serialport::Parity::None)
-    .data_bits( DataBits::Eight)
-    .stop_bits(StopBits::One)
-    .timeout(Duration::from_millis(2000))
-    .open()
-    .expect("Failed to open serial port");
+    let mut uart =
+        TTYPort::open(&serialport::new("/dev/ttyS1", 115200)).expect("Failed to open serial port");
+    uart.set_exclusive(false);
+    uart.set_parity(serialport::Parity::None);
+    uart.set_data_bits(DataBits::Eight);
+    uart.set_stop_bits(StopBits::One);
+    uart.set_timeout(Duration::from_millis(2000));
 
     let (sender, mut receiver) = channel();
     let (mut reader, mut writer) = split_uart(uart);
