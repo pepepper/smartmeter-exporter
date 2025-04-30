@@ -471,7 +471,7 @@ fn parse_erxudp(input: &[u8]) -> IResult<&[u8], Response> {
         nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::AlphaNumeric))
     )?;
 
-    let (input, data) = take(datalen)(input)?;
+    let (input, data) = take(datalen*2)(input)?;
     let (data, ehd) = parse_ehd(data)?;
 
     let edata = if ehd.ehd1 == 0x10 && ehd.ehd2 == 0x81 {
@@ -479,7 +479,7 @@ fn parse_erxudp(input: &[u8]) -> IResult<&[u8], Response> {
 
         edata
     } else {
-        EData::InvalidEData(data)
+        EData::InvalidEData(hex::decode(data).unwrap().into())
     };
     let (input, _) = crlf(input)?;
 
@@ -518,12 +518,12 @@ fn parse_edata_property(input: &[u8]) -> IResult<&[u8], EDataProperty> {
         map_res(hex_digit1, from_hex_u8),
         map_res(hex_digit1, from_hex_u8),
     ))(input)?;
-    let (input, edt) = take(pdc)(input)?;
+    let (input, edt) = take(pdc*2)(input)?;
 
     let p = EDataProperty {
         epc,
         pdc,
-        edt,
+        edt : hex::decode(edt).unwrap().into(),
     };
     Ok((input, p))
 }
