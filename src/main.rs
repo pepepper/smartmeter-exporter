@@ -6,8 +6,8 @@ use std::fs::OpenOptions;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver};
-use std::sync::{Arc, Mutex};
-use std::thread::{sleep, JoinHandle};
+use std::sync::{Arc};
+use std::thread::{JoinHandle};
 use std::time::Duration;
 use std::{io::Read, io::Write, net::SocketAddr};
 
