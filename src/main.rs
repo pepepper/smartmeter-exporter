@@ -261,7 +261,7 @@ fn initialize() -> Result<(UartWriter, Receiver<Response>, IpAddr, JoinHandle<()
                     buf.put(&b[..n]);
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::TimedOut =>{
-                    debug!("timed out");
+                    continue;
                 }
                 Err(e) => {
                     error!("uart read error: {:?}", e);

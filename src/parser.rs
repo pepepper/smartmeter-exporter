@@ -178,11 +178,11 @@ impl fmt::Debug for Response {
                 .debug_struct("ERxUdp")
                 .field("sender", &sender)
                 .field("dest", &dest)
-                .field("rport", &rport)
-                .field("lport", &lport)
+                .field("rport", &format_args!("{:#x}",rport))
+                .field("lport", &format_args!("{:#x}",lport))
                 .field("senderlla", &senderlla)
                 .field("secured", &format_args!("{:#x}", secured))
-                .field("datalen", &datalen)
+                .field("datalen", &format_args!("{:#x}",datalen))
                 .field("data", &data)
                 .finish(),
         }
