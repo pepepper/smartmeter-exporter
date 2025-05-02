@@ -376,9 +376,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 break 'main;
             }
             counter_request_energy.inc();
+            let total_wait_time = std::time::Instant::now();
 
             // wait response for energy request
             'wait_response: loop {
+                if total_wait_time > Duration::from_secs(19){
+                    break;
+                }
+
                 let r = match receiver.recv() {
                     Ok(r) => r,
                     Err(e) => {
