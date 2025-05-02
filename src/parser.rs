@@ -186,6 +186,7 @@ impl fmt::Debug for Response {
                 .field("datalen", &format_args!("{:#x}",datalen))
                 .field("data", &data)
                 .finish(),
+                Response::UartTimeOut =>f.debug_struct("timeout").finish()
         }
     }
 }
