@@ -78,6 +78,7 @@ pub enum Response {
         datalen: u16,
         data: EchonetLite,
     },
+    UartTimeOut,
 }
 
 #[derive(PartialEq, Default, Clone)]

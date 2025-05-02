@@ -261,6 +261,7 @@ fn initialize() -> Result<(UartWriter, Receiver<Response>, IpAddr, JoinHandle<()
                     buf.put(&b[..n]);
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::TimedOut =>{
+                    sender.send(Response::UartTimeOut).unwrap();
                     continue;
                 }
                 Err(e) => {
@@ -380,8 +381,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             // wait response for energy request
             'wait_response: loop {
-                if total_wait_time > Duration::from_secs(19){
-                    break;
+                if total_wait_time.elapsed() > Duration::from_secs(19){
+                    break 'wait_response;
                 }
 
                 let r = match receiver.recv() {
