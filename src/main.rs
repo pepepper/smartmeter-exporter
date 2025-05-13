@@ -244,7 +244,7 @@ fn send_initialize_command_sequence(
         match r {
             Response::SkSendTo { result: 0x00, .. } => {}
             Response::SkSendTo { result: _, .. } => {
-                warn!("failed to send cumulative energy unit request: {:?}", r);
+                return Err("Send cumulative energy unit request failed".into());
             }
             Response::ERxUdp {
                 data:
@@ -290,7 +290,6 @@ fn send_initialize_command_sequence(
                 }
             }
             _ => {
-                return Err("Get cumulative energy unit failed".into());
             }
         }
     }
