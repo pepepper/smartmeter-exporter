@@ -6,8 +6,8 @@ use std::fs::OpenOptions;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver};
-use std::sync::{Arc};
-use std::thread::{JoinHandle};
+use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::Duration;
 use std::{io::Read, io::Write, net::SocketAddr};
 
@@ -45,7 +45,10 @@ fn split_uart(uart: TTYPort) -> (UartReader, UartWriter) {
             inner: uart.try_clone_native().unwrap(),
             is_closed: is_closed.clone(),
         },
-        UartWriter { inner: uart, is_closed },
+        UartWriter {
+            inner: uart,
+            is_closed,
+        },
     )
 }
 
@@ -57,8 +60,7 @@ impl Read for UartReader {
                 "uart writer is disconnected",
             ));
         }
-        self.inner
-            .read(buf)
+        self.inner.read(buf)
     }
 }
 
@@ -87,8 +89,7 @@ impl Write for UartWriter {
             ));
         }
 
-        self.inner
-            .write(buf)
+        self.inner.write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -163,7 +164,7 @@ fn wait_for_connect(
 fn send_initialize_command_sequence(
     writer: &mut UartWriter,
     receiver: &mut Receiver<Response>,
-) -> Result<IpAddr, Box<dyn Error>> {
+) -> Result<(IpAddr, f64), Box<dyn Error>> {
     // reset
     writer.send_command(Command::SkReset)?;
     let r = receiver.recv()?;
@@ -230,7 +231,64 @@ fn send_initialize_command_sequence(
 
     wait_for_connect(writer, receiver)?;
 
-    Ok(ipv6_addr)
+    writer.send_command(Command::SendCumulativeEnergyUnitRequeest { ipaddr: &ipv6_addr })?;
+    let r = receiver.recv()?;
+    let mut unit = 0.0;
+    match r {
+        Response::SkSendTo { result: 0x00, .. } => {}
+        Response::ERxUdp {
+            data:
+                EchonetLite {
+                    edata:
+                        EData::EDataFormat1(EDataFormat1 {
+                            seoj: EOJ_HOUSING_LOW_VOLTAGE_SMART_METER,
+                            props,
+                            ..
+                        }),
+                    ..
+                },
+            ..
+        } => {
+            for prop in props {
+                match prop {
+                    EDataProperty {
+                        epc: EpcLowVoltageSmartMeter::CUMULATIVE_ENERGY_UNIT,
+                        pdc: 0x01,
+                        mut edt,
+                        ..
+                    } => {
+                        let unit_data = edt.get_u8();
+                        unit = match unit_data {
+                            0x0 => 1.0,
+                            0x1 => 0.1,
+                            0x2 => 0.01,
+                            0x3 => 0.001,
+                            0x4 => 0.0001,
+                            0xa => 10.0,
+                            0xb => 100.0,
+                            0xc => 1000.0,
+                            0xd => 10000.0,
+                            _ => {
+                                return Err("Invalid cumulative energy unit".into());
+                            }
+                        };
+                    }
+                    _ => {
+                        // ignore
+                    }
+                }
+            }
+        }
+        _ => {
+            return Err("Get cumulative energy unit failed".into());
+        }
+    }
+
+    if unit == 0.0 {
+        return Err("Get cumulative energy unit failed".into());
+    }
+
+    Ok((ipv6_addr, unit))
 }
 
 // # cancellation
@@ -238,8 +296,8 @@ fn send_initialize_command_sequence(
 // By dropping thre writer, reader.read() will get error and then the reader thread closes.
 // Note that reader.read() yield something no later than reader timeout set by uart.set_read_mode().
 // So, if you drop the writer, you can successfully join the reader thread within the timeout.
-fn initialize() -> Result<(UartWriter, Receiver<Response>, IpAddr, JoinHandle<()>), Box<dyn Error>>
-{
+fn initialize(
+) -> Result<(UartWriter, Receiver<Response>, IpAddr, JoinHandle<()>, f64), Box<dyn Error>> {
     let mut uart =
         TTYPort::open(&serialport::new("/dev/ttyO1", 115200)).expect("Failed to open serial port");
     uart.set_parity(serialport::Parity::None)?;
@@ -260,7 +318,7 @@ fn initialize() -> Result<(UartWriter, Receiver<Response>, IpAddr, JoinHandle<()
                     debug!("read: {:?}", &b[..n]);
                     buf.put(&b[..n]);
                 }
-                Err(ref e) if e.kind() == io::ErrorKind::TimedOut =>{
+                Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
                     sender.send(Response::UartTimeOut).unwrap();
                     continue;
                 }
@@ -295,7 +353,7 @@ fn initialize() -> Result<(UartWriter, Receiver<Response>, IpAddr, JoinHandle<()
         drop(sender);
     });
 
-    let ipv6_addr = match send_initialize_command_sequence(&mut writer, &mut receiver) {
+    let (ipv6_addr,unit) = match send_initialize_command_sequence(&mut writer, &mut receiver) {
         Ok(ipv6_addr) => ipv6_addr,
         Err(e) => {
             drop(writer);
@@ -304,7 +362,7 @@ fn initialize() -> Result<(UartWriter, Receiver<Response>, IpAddr, JoinHandle<()
         }
     };
 
-    Ok((writer, receiver, ipv6_addr, handle))
+    Ok((writer, receiver, ipv6_addr, handle, unit))
 }
 
 const B_ID: &str = std::env!("B_ID");
@@ -354,17 +412,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     let instantaneous_energy =
         register_gauge!("instantaneous_energy", "Current Power Consumption in Watt")
             .expect("can not create gauge instantaneous_energy");
+    let cumulative_energy =
+        register_gauge!("cumulative_energy", "Cumulative Power Consumption in Watt")
+            .expect("can not create gauge cumulative_energy");
 
     loop {
-        let (mut writer, mut receiver, ipv6_addr, handle) = match initialize() {
-            Ok(ipv6_addr) => ipv6_addr,
-            Err(e) => {
-                error!("unable to initialize smartmeter: {:?}", e);
-                std::thread::sleep(Duration::from_secs(30));
-                counter_error_initialize.inc();
-                continue;
-            }
-        };
+        let (mut writer, mut receiver, ipv6_addr, handle, cumulative_energy_unit) =
+            match initialize() {
+                Ok(ipv6_addr) => ipv6_addr,
+                Err(e) => {
+                    error!("unable to initialize smartmeter: {:?}", e);
+                    std::thread::sleep(Duration::from_secs(30));
+                    counter_error_initialize.inc();
+                    continue;
+                }
+            };
         counter_success_initialize.inc();
         info!("initialize completed");
 
@@ -381,7 +443,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             // wait response for energy request
             'wait_response: loop {
-                if total_wait_time.elapsed() > Duration::from_secs(19){
+                if total_wait_time.elapsed() > Duration::from_secs(19) {
                     break 'wait_response;
                 }
 
@@ -426,6 +488,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 } => {
                                     let power = edt.get_u32();
                                     instantaneous_energy.set(power as f64);
+                                }
+                                EDataProperty {
+                                    epc: EpcLowVoltageSmartMeter::CUMULATIVE_ENERGY_FIXED_TIME_NORMAL_DIRECTION,
+                                    pdc: 0x0b,
+                                    mut edt,
+                                    ..
+                                } => {
+                                    let power = edt.slice(7..11).get_u32();
+                                    cumulative_energy.set((power as f64 )*cumulative_energy_unit);
                                 }
                                 _ => {
                                     // ignore

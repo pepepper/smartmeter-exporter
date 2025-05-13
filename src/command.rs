@@ -28,6 +28,9 @@ pub enum Command<'a> {
     },
     SendEnergyRequest {
         ipaddr: &'a IpAddr,
+    },
+    SendCumulativeEnergyUnitRequeest {
+        ipaddr: &'a IpAddr,
     }
 }
 
@@ -98,6 +101,32 @@ impl Into<Bytes> for Command<'_> {
                         opc: 0x01,
                         props: vec![EDataProperty {
                             epc: EpcLowVoltageSmartMeter::INSTANTANEOUS_ENERGY,
+                            pdc: 0x00,
+                            edt: Bytes::new(),
+                        }],
+                    })
+                };
+                let get_now_p: Bytes = get_now_p.into();
+
+                let mut cmd = BytesMut::from(format!("SKSENDTO 1 {} 0E1A 1 0 {:>04X} ", ipaddr, get_now_p.len()).as_bytes());
+                cmd.put(get_now_p);
+                cmd.put(&b"\r\n"[..]);
+                cmd.into()
+            },Command::SendCumulativeEnergyUnitRequeest { ipaddr } => {
+                // get current power consumption
+                let get_now_p = EchonetLite {
+                    ehd: EHd {
+                        ehd1: EHD1_ECHONET_LITE,
+                        ehd2: EHD2_FORMAT1,
+                        tid: 0x0001,
+                    },
+                    edata: EData::EDataFormat1(EDataFormat1 {
+                        seoj: EOJ_MANAGEMENT_CONTROLLER,
+                        deoj: EOJ_HOUSING_LOW_VOLTAGE_SMART_METER,
+                        esv: Esv::PROP_READ,
+                        opc: 0x01,
+                        props: vec![EDataProperty {
+                            epc: EpcLowVoltageSmartMeter::CUMULATIVE_ENERGY_UNIT,
                             pdc: 0x00,
                             edt: Bytes::new(),
                         }],
