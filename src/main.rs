@@ -233,12 +233,13 @@ fn send_initialize_command_sequence(
 
     writer.send_command(Command::SendCumulativeEnergyUnitRequeest { ipaddr: &ipv6_addr })?;
     let mut unit = 0.0;
+    let total_wait_time = std::time::Instant::now();
 
     'wait_response: loop {
         if total_wait_time.elapsed() > Duration::from_secs(19) {
             break 'wait_response;
         }
-        
+
         let r = receiver.recv()?;
         match r {
             Response::SkSendTo { result: 0x00, .. } => {}
