@@ -232,55 +232,65 @@ fn send_initialize_command_sequence(
     wait_for_connect(writer, receiver)?;
 
     writer.send_command(Command::SendCumulativeEnergyUnitRequeest { ipaddr: &ipv6_addr })?;
-    let r = receiver.recv()?;
     let mut unit = 0.0;
-    match r {
-        Response::SkSendTo { result: 0x00, .. } => {}
-        Response::ERxUdp {
-            data:
-                EchonetLite {
-                    edata:
-                        EData::EDataFormat1(EDataFormat1 {
-                            seoj: EOJ_HOUSING_LOW_VOLTAGE_SMART_METER,
-                            props,
-                            ..
-                        }),
-                    ..
-                },
-            ..
-        } => {
-            for prop in props {
-                match prop {
-                    EDataProperty {
-                        epc: EpcLowVoltageSmartMeter::CUMULATIVE_ENERGY_UNIT,
-                        pdc: 0x01,
-                        mut edt,
+
+    'wait_response: loop {
+        if total_wait_time.elapsed() > Duration::from_secs(19) {
+            break 'wait_response;
+        }
+        
+        let r = receiver.recv()?;
+        match r {
+            Response::SkSendTo { result: 0x00, .. } => {}
+            Response::SkSendTo { result: _, .. } => {
+                warn!("failed to send cumulative energy unit request: {:?}", r);
+            }
+            Response::ERxUdp {
+                data:
+                    EchonetLite {
+                        edata:
+                            EData::EDataFormat1(EDataFormat1 {
+                                seoj: EOJ_HOUSING_LOW_VOLTAGE_SMART_METER,
+                                props,
+                                ..
+                            }),
                         ..
-                    } => {
-                        let unit_data = edt.get_u8();
-                        unit = match unit_data {
-                            0x0 => 1.0,
-                            0x1 => 0.1,
-                            0x2 => 0.01,
-                            0x3 => 0.001,
-                            0x4 => 0.0001,
-                            0xa => 10.0,
-                            0xb => 100.0,
-                            0xc => 1000.0,
-                            0xd => 10000.0,
-                            _ => {
-                                return Err("Invalid cumulative energy unit".into());
-                            }
-                        };
-                    }
-                    _ => {
-                        // ignore
+                    },
+                ..
+            } => {
+                for prop in props {
+                    match prop {
+                        EDataProperty {
+                            epc: EpcLowVoltageSmartMeter::CUMULATIVE_ENERGY_UNIT,
+                            pdc: 0x01,
+                            mut edt,
+                            ..
+                        } => {
+                            let unit_data = edt.get_u8();
+                            unit = match unit_data {
+                                0x0 => 1.0,
+                                0x1 => 0.1,
+                                0x2 => 0.01,
+                                0x3 => 0.001,
+                                0x4 => 0.0001,
+                                0xa => 10.0,
+                                0xb => 100.0,
+                                0xc => 1000.0,
+                                0xd => 10000.0,
+                                _ => {
+                                    return Err("Invalid cumulative energy unit".into());
+                                }
+                            };
+                        }
+                        _ => {
+                            // ignore
+                        }
                     }
                 }
             }
-        }
-        _ => {
-            return Err("Get cumulative energy unit failed".into());
+            _ => {
+                return Err("Get cumulative energy unit failed".into());
+            }
         }
     }
 
@@ -353,7 +363,7 @@ fn initialize(
         drop(sender);
     });
 
-    let (ipv6_addr,unit) = match send_initialize_command_sequence(&mut writer, &mut receiver) {
+    let (ipv6_addr, unit) = match send_initialize_command_sequence(&mut writer, &mut receiver) {
         Ok(ipv6_addr) => ipv6_addr,
         Err(e) => {
             drop(writer);
